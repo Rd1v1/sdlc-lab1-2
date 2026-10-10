@@ -1,0 +1,110 @@
+name: LAB 2 - file manager CI/CD
+"on":
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  DOCKER_BUILDKIT: '1'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: actions/cache@v4
+        with:
+          path: .cache/docker
+          key: docker-${{ runner.os }}-${{ hashFiles('Dockerfile', '**/requirements*.txt') }}
+      - name: Build real application in container
+        run: |
+          mkdir -p /tmp/sdlc-build
+          cp -a Dockerfile .dockerignore requirements.txt requirements-dev.txt lab1 scripts .github /tmp/sdlc-build/
+          if [ -d .cache/docker ]; then mkdir -p /tmp/sdlc-build/.cache; cp -a .cache/docker /tmp/sdlc-build/.cache/; fi
+          cd /tmp/sdlc-build
+          docker buildx build --target build --load -t sdlc-build:local --cache-from type=local,src=.cache/docker --cache-to type=local,dest=.cache/docker-next,mode=max .
+          mkdir -p "$GITHUB_WORKSPACE/artifacts" "$GITHUB_WORKSPACE/.cache"
+          docker save sdlc-build:local -o "$GITHUB_WORKSPACE/artifacts/build-image.tar"
+          rm -rf "$GITHUB_WORKSPACE/.cache/docker"
+          mv .cache/docker-next "$GITHUB_WORKSPACE/.cache/docker"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-image
+          path: artifacts/build-image.tar
+          retention-days: 3
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-image
+          path: artifacts
+      - name: Test real LAB 1; emit JUnit
+        run: |
+          docker load -i artifacts/build-image.tar
+          docker run --name sdlc-tests sdlc-build:local python scripts/test.py
+      - name: Collect JUnit even on failure
+        if: always()
+        run: |
+          docker cp sdlc-tests:/app/artifacts/junit.xml artifacts/junit.xml
+          docker rm sdlc-tests
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit
+          path: artifacts/junit.xml
+  sast:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-image
+          path: artifacts
+      - name: Fail on High severity vulnerabilities
+        run: |
+          docker load -i artifacts/build-image.tar
+          docker run --name sdlc-sast sdlc-build:local sh -c 'mkdir -p artifacts && python -m bandit -r lab1/src -lll -f json -o artifacts/bandit.json'
+      - name: Collect SAST report
+        if: always()
+        run: |
+          docker cp sdlc-sast:/app/artifacts/bandit.json artifacts/bandit.json
+          docker rm sdlc-sast
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast
+          path: artifacts/bandit.json
+  deploy:
+    needs: sast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run non-root application locally
+        run: |
+          mkdir -p /tmp/sdlc-deploy
+          cp -a Dockerfile .dockerignore requirements.txt requirements-dev.txt lab1 scripts .github /tmp/sdlc-deploy/
+          cd /tmp/sdlc-deploy
+          docker build --target runtime -t sdlc-lab1:local .
+          docker run -d --name sdlc-lab1-demo -p 127.0.0.1:18080:8080 sdlc-lab1:local
+          for attempt in $(seq 1 20); do
+            if docker exec sdlc-lab1-demo python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"; then break; fi
+            sleep 1
+          done
+          curl --fail http://127.0.0.1:18080/health
+          docker exec sdlc-lab1-demo python -m lab1.src.app help
+          test "$(docker exec sdlc-lab1-demo id -u)" = 10001
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          docker save sdlc-lab1:local -o "$GITHUB_WORKSPACE/artifacts/lab1-image.tar"
+      - name: Stop demo container
+        if: always()
+        run: docker rm -f sdlc-lab1-demo
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab1-image
+          path: artifacts/lab1-image.tar
+          retention-days: 3
