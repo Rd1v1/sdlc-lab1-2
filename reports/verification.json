@@ -4,7 +4,7 @@
   "local_sast_high": 0,
   "negative_test_gate": "passed",
   "negative_sast_gate": "passed",
-  "local_act": "blocked: Docker runtime socket",
+  "local_act": "passed",
   "remote_ci": {
     "run_id": 39142755259,
     "code_commit": "a837976ba7b1cadc9fb7c9610d3932d2d9eef652",
@@ -22,5 +22,21 @@
       "errors": 0,
       "skipped": 0
     }
+  },
+  "local_ci": {
+    "conclusion": "success",
+    "jobs": {
+      "build": "success",
+      "test": "success",
+      "sast": "success",
+      "deploy": "success"
+    },
+    "container_tests": {
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "container_sast_high": 0
   }
 }
