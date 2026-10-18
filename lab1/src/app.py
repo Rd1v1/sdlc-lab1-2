@@ -9,10 +9,9 @@ import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-try:
-    from .safe_file_manager import AuditStore, SafeFileError, SafeFileManager
-except ImportError:
-    from safe_file_manager import AuditStore, SafeFileError, SafeFileManager
+from .audit import AuditStore
+from .errors import SafeFileError
+from .safe_file_manager import SafeFileManager
 
 
 DATA_ROOT = Path("lab1-data/files")

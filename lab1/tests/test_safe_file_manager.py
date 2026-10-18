@@ -5,7 +5,9 @@ import zipfile
 import multiprocessing
 from pathlib import Path
 
-from lab1.src.safe_file_manager import AuditStore, SafeFileError, SafeFileManager
+from lab1.src.audit import AuditStore
+from lab1.src.errors import SafeFileError
+from lab1.src.safe_file_manager import SafeFileManager
 
 
 def _write_from_process(root: str, database: str, payload: str) -> None:

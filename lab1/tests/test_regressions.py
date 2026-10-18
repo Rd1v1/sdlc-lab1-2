@@ -7,7 +7,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from lab1.src import app
-from lab1.src.safe_file_manager import AuditStore, SafeFileManager, SafeFileError
+from lab1.src.audit import AuditStore
+from lab1.src.errors import SafeFileError
+from lab1.src.safe_file_manager import SafeFileManager
 
 
 class RegressionTests(unittest.TestCase):
