@@ -24,6 +24,7 @@
     }
   },
   "local_ci": {
+    "checked_on": "2026-10-24",
     "conclusion": "success",
     "jobs": {
       "build": "success",
@@ -38,5 +39,13 @@
       "skipped": 0
     },
     "container_sast_high": 0
+  },
+  "checked_on": "2026-10-24",
+  "readme_commands": {
+    "setup_help": "passed",
+    "full_cli_demo": "passed",
+    "tests_and_junit": "passed",
+    "negative_ci_gates": "passed",
+    "act_setup_list_and_full_offline_run": "passed"
   }
 }
