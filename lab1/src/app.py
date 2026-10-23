@@ -38,11 +38,6 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--text", required=True)
     write.add_argument("--user", required=True)
 
-    for name in ("copy", "move"):
-        command = commands.add_parser(name, help="Безопасное копирование или перемещение")
-        command.add_argument("source")
-        command.add_argument("destination")
-        command.add_argument("--user", required=True)
     json_write = commands.add_parser("json-write", help="Записать JSON")
     json_write.add_argument("name")
     json_write.add_argument("--value", required=True)
@@ -100,12 +95,6 @@ def run(arguments: list[str] | None = None) -> int:
             elif options.command == "delete":
                 manager.delete(options.name, user_id)
                 print("Файл удалён")
-            elif options.command == "copy":
-                manager.copy_file(options.source, options.destination, user_id)
-                print("Файл скопирован")
-            elif options.command == "move":
-                manager.move_file(options.source, options.destination, user_id)
-                print("Файл перемещён")
             elif options.command == "json-write":
                 manager.write_json(options.name, json.loads(options.value), user_id)
                 print("JSON сохранён")

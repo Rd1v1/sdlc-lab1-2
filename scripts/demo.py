@@ -21,15 +21,13 @@ def main():
                 ['write', 'заметки/мой файл.txt', '--text', 'Привет'],
                 ['read', 'заметки/мой файл.txt'],
                 ['write', 'заметки/мой файл.txt', '--text', 'Обновлено'],
-                ['copy', 'заметки/мой файл.txt', 'copy.txt'],
-                ['move', 'copy.txt', 'moved.txt'],
                 ['json-write', 'data.json', '--value', '{"name":"пример","count":3}'],
                 ['json-read', 'data.json'],
                 ['xml-write', 'data.xml', '--value', '<root><name>Пример</name></root>'],
                 ['xml-read', 'data.xml'],
                 ['zip-create', 'demo.zip', 'data.json', 'data.xml'],
                 ['zip-extract', 'demo.zip', 'unpacked'], ['list'],
-                ['delete', 'moved.txt'], ['read', '../outside'], ['exit'],
+                ['delete', 'заметки/мой файл.txt'], ['read', '../outside'], ['exit'],
             ]
             for command in commands:
                 if command[0] not in ('help', 'pwd', 'drives', 'register', 'exit'):

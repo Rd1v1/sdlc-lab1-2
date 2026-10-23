@@ -78,17 +78,6 @@ class SafeFileManagerTests(unittest.TestCase):
             self.manager.delete("private.txt", other_user)
         self.assertEqual(self.manager.read_text("private.txt", self.user_id), "private")
 
-    def test_copy_and_move_do_not_overwrite_existing_files(self):
-        self.manager.write_text("source.txt", "content", self.user_id)
-        self.manager.copy_file("source.txt", "copy.txt", self.user_id)
-        self.assertEqual(self.manager.read_text("copy.txt", self.user_id), "content")
-        with self.assertRaises(SafeFileError):
-            self.manager.copy_file("source.txt", "copy.txt", self.user_id)
-        self.manager.move_file("source.txt", "moved.txt", self.user_id)
-        self.assertEqual(self.manager.read_text("moved.txt", self.user_id), "content")
-        with self.assertRaises(SafeFileError):
-            self.manager.read_text("source.txt", self.user_id)
-
     def test_json_round_trip_and_invalid_xml(self):
         value = {"name": "пример", "count": 3}
         self.manager.write_json("data.json", value, self.user_id)
@@ -143,7 +132,7 @@ class SafeFileManagerTests(unittest.TestCase):
             self.audit._connection.execute("SELECT COUNT(*) FROM Operations").fetchone()[0], 10
         )
 
-    def test_named_lock_serializes_separate_processes(self):
+    def test_sqlite_transaction_serializes_separate_processes(self):
         context = multiprocessing.get_context("spawn")
         processes = [
             context.Process(

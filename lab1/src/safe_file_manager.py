@@ -5,7 +5,6 @@ import json
 import os
 import re
 import tempfile
-import threading
 from pathlib import Path
 from typing import Any
 import xml.etree.ElementTree as ET
@@ -13,7 +12,6 @@ from .archives import create_zip, extract_zip
 from .audit import AuditStore
 from .drives import list_drives
 from .errors import SafeFileError
-from .locking import file_lock
 from .paths import resolve_path
 
 
@@ -34,15 +32,13 @@ class SafeFileManager:
         self.max_file_bytes = max_file_bytes
         self.max_archive_bytes = max_archive_bytes
         self.max_compression_ratio = max_compression_ratio
-        self._lock = threading.RLock()
-        self._process_lock_state = threading.local()
 
     def list_files(self, user_id: int) -> list[dict[str, Any]]:
         return self.audit.list_owned_files(user_id)
 
     def read_text(self, name: str, user_id: int) -> str:
         path = self._path(name)
-        with self._lock, self._cross_process_lock():
+        with self.audit.transaction():
             if not path.is_file():
                 raise SafeFileError("Файл не найден")
             self.audit.ensure_owner(path.relative_to(self.root).as_posix(), user_id, require_registered=True)
@@ -56,7 +52,7 @@ class SafeFileManager:
         if len(data) > self.max_file_bytes:
             raise SafeFileError("Размер файла превышает установленный лимит")
         path = self._path(name)
-        with self._lock, self._cross_process_lock():
+        with self.audit.transaction():
             self.audit.ensure_owner(
                 path.relative_to(self.root).as_posix(), user_id, require_registered=path.exists()
             )
@@ -79,51 +75,12 @@ class SafeFileManager:
 
     def delete(self, name: str, user_id: int) -> None:
         path = self._path(name)
-        with self._lock, self._cross_process_lock():
+        with self.audit.transaction():
             if not path.is_file():
                 raise SafeFileError("Файл не найден")
             self.audit.ensure_owner(path.relative_to(self.root).as_posix(), user_id, require_registered=True)
             path.unlink()
             self.audit.record_file(path.relative_to(self.root).as_posix(), 0, user_id, "delete")
-
-    def copy_file(self, source_name: str, destination_name: str, user_id: int) -> None:
-        source = self._path(source_name)
-        destination = self._path(destination_name)
-        with self._lock, self._cross_process_lock():
-            if not source.is_file():
-                raise SafeFileError("Исходный файл не найден")
-            source_key = source.relative_to(self.root).as_posix()
-            destination_key = destination.relative_to(self.root).as_posix()
-            self.audit.ensure_owner(source_key, user_id, require_registered=True)
-            self.audit.ensure_owner(destination_key, user_id)
-            if destination.exists():
-                raise SafeFileError("Файл назначения уже существует; перезапись запрещена")
-            if source.stat().st_size > self.max_file_bytes:
-                raise SafeFileError("Исходный файл превышает установленный лимит")
-            data = source.read_bytes()
-            self.write_bytes(destination_name, data, user_id)
-            self.audit.record_activity("copy", source_key, user_id)
-
-    def move_file(self, source_name: str, destination_name: str, user_id: int) -> None:
-        source = self._path(source_name)
-        destination = self._path(destination_name)
-        with self._lock, self._cross_process_lock():
-            if not source.is_file():
-                raise SafeFileError("Исходный файл не найден")
-            source_key = source.relative_to(self.root).as_posix()
-            destination_key = destination.relative_to(self.root).as_posix()
-            self.audit.ensure_owner(source_key, user_id, require_registered=True)
-            self.audit.ensure_owner(destination_key, user_id)
-            if destination.exists():
-                raise SafeFileError("Файл назначения уже существует; перезапись запрещена")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.link(source, destination)
-            except OSError as error:
-                raise SafeFileError("Не удалось атомарно создать файл назначения") from error
-            source.unlink()
-            self.audit.record_file(destination_key, destination.stat().st_size, user_id, "write")
-            self.audit.record_file(source_key, 0, user_id, "delete")
 
     def write_json(self, name: str, value: Any, user_id: int) -> None:
         self.write_text(name, json.dumps(value, ensure_ascii=False, indent=2), user_id)
@@ -148,18 +105,15 @@ class SafeFileManager:
             raise SafeFileError("Некорректный XML") from error
 
     def create_zip(self, archive_name: str, names: list[str], user_id: int) -> None:
-        with self._lock, self._cross_process_lock():
+        with self.audit.transaction():
             create_zip(self, archive_name, names, user_id)
 
     def extract_zip(self, archive_name: str, destination: str, user_id: int) -> list[str]:
-        with self._lock, self._cross_process_lock():
+        with self.audit.transaction():
             return extract_zip(self, archive_name, destination, user_id)
 
     def _path(self, name: str) -> Path:
         return resolve_path(self.root, name)
-
-    def _cross_process_lock(self):
-        return file_lock(self.root, self._process_lock_state)
 
     @staticmethod
     def list_drives():

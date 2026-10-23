@@ -24,6 +24,33 @@ class RegressionTests(unittest.TestCase):
         self.audit.close()
         self.temp.cleanup()
 
+    def test_nested_audit_writes_wait_for_outer_commit_and_rollback(self):
+        import sqlite3
+        observer = sqlite3.connect(self.base / 'audit.db')
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'cancel'):
+                with self.audit.transaction():
+                    self.audit.record_file('pending', 3, self.user, 'write')
+                    self.audit.record_activity('read', 'pending', self.user)
+                    self.assertIsNone(observer.execute("SELECT id FROM Files WHERE location='pending'").fetchone())
+                    raise RuntimeError('cancel')
+            self.assertFalse(self.audit._connection.in_transaction)
+            self.assertIsNone(observer.execute("SELECT id FROM Files WHERE location='pending'").fetchone())
+            with self.audit.transaction():
+                self.audit.record_file('committed', 3, self.user, 'write')
+            self.assertIsNotNone(observer.execute("SELECT id FROM Files WHERE location='committed'").fetchone())
+            connection = self.audit._connection
+            with patch.object(self.audit, '_connection', wraps=connection) as proxy:
+                proxy.in_transaction = False
+                proxy.commit.side_effect = sqlite3.OperationalError('commit failed')
+                with self.assertRaisesRegex(sqlite3.OperationalError, 'commit failed'):
+                    with self.audit.transaction():
+                        connection.execute("UPDATE Files SET size=99 WHERE location='committed'")
+            self.assertFalse(connection.in_transaction)
+            self.assertEqual(observer.execute("SELECT size FROM Files WHERE location='committed'").fetchone()[0], 3)
+        finally:
+            observer.close()
+
     def test_unicode_spaces_relative_and_xml_roundtrip(self):
         name = "папка с пробелом/данные.xml"
         self.fm.write_xml(name, '<root><name>Привет</name></root>', self.user)

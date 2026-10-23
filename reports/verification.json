@@ -4,28 +4,9 @@
   "local_sast_high": 0,
   "negative_test_gate": "passed",
   "negative_sast_gate": "passed",
+  "previous_database_compatibility": "passed",
   "local_act": "passed",
-  "remote_ci": {
-    "run_id": 39142755259,
-    "code_commit": "a837976ba7b1cadc9fb7c9610d3932d2d9eef652",
-    "conclusion": "success",
-    "jobs": {
-      "build": "success",
-      "test": "success",
-      "sast": "success",
-      "deploy": "success"
-    },
-    "container_sast_high": 0,
-    "container_tests": {
-      "tests": 21,
-      "failures": 0,
-      "errors": 0,
-      "skipped": 0
-    }
-  },
   "local_ci": {
-    "checked_on": "2026-10-24",
-    "conclusion": "success",
     "jobs": {
       "build": "success",
       "test": "success",
@@ -39,13 +20,5 @@
       "skipped": 0
     },
     "container_sast_high": 0
-  },
-  "checked_on": "2026-10-24",
-  "readme_commands": {
-    "setup_help": "passed",
-    "full_cli_demo": "passed",
-    "tests_and_junit": "passed",
-    "negative_ci_gates": "passed",
-    "act_setup_list_and_full_offline_run": "passed"
   }
 }

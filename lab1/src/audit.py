@@ -1,6 +1,7 @@
 """Пользователи, права на файлы, метаданные и журнал SQLite."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import hmac
 import re
@@ -18,7 +19,7 @@ class AuditStore:
         self._connection = sqlite3.connect(database, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        with self._lock, self._connection:
+        with self._lock:
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.executescript(
                 """
@@ -47,6 +48,22 @@ class AuditStore:
                 """
             )
 
+    @contextmanager
+    def transaction(self):
+        """SQLite serializes application operations across threads and processes."""
+        with self._lock:
+            outer = not self._connection.in_transaction
+            if outer:
+                self._connection.execute('BEGIN IMMEDIATE')
+            try:
+                yield
+                if outer:
+                    self._connection.commit()
+            except BaseException:
+                if outer:
+                    self._connection.rollback()
+                raise
+
     def create_user(self, username: str, password: str) -> int:
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,50}", username):
             raise SafeFileError("Логин: 1-50 символов, допустимы буквы, цифры, . _ -")
@@ -55,7 +72,7 @@ class AuditStore:
         salt = secrets.token_bytes(16)
         digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
         try:
-            with self._lock, self._connection:
+            with self.transaction():
                 cursor = self._connection.execute(
                     "INSERT INTO Users(username, password_salt, password_hash) VALUES (?, ?, ?)",
                     (username, salt, digest),
@@ -76,7 +93,7 @@ class AuditStore:
                 (username,),
             ).fetchone()
         if row is None:
-            with self._lock, self._connection:
+            with self.transaction():
                 self._connection.execute(
                     "INSERT INTO Operations(operation_type, detail) VALUES (?, ?)",
                     ("login_failed", username[:50]),
@@ -87,7 +104,7 @@ class AuditStore:
         )
         user_id = int(row["id"])
         success = hmac.compare_digest(candidate, row["password_hash"])
-        with self._lock, self._connection:
+        with self.transaction():
             self._connection.execute(
                 "INSERT INTO Operations(operation_type, user_id, detail) VALUES (?, ?, ?)",
                 ("login" if success else "login_failed", user_id, username),
@@ -95,7 +112,7 @@ class AuditStore:
         return user_id if success else None
 
     def record_file(self, path: str, size: int, user_id: int, operation: str) -> None:
-        with self._lock, self._connection:
+        with self.transaction():
             row = self._connection.execute(
                 "SELECT id FROM Files WHERE location = ?", (path,)
             ).fetchone()
@@ -129,7 +146,7 @@ class AuditStore:
             )
 
     def record_activity(self, operation: str, path: str, user_id: int) -> None:
-        with self._lock, self._connection:
+        with self.transaction():
             row = self._connection.execute(
                 "SELECT id FROM Files WHERE location = ?", (path,)
             ).fetchone()

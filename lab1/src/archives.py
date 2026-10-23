@@ -26,7 +26,7 @@ def create_zip(manager, archive_name: str, names: list[str], user_id: int) -> No
     total = sum(path.stat().st_size for path, _ in sources)
     if total > manager.max_archive_bytes:
         raise SafeFileError("Суммарный размер архива превышает лимит")
-    with manager._lock, manager._cross_process_lock():
+    with manager.audit.transaction():
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(dir=archive_path.parent, suffix=".zip", delete=False) as temporary:
             temporary_path = Path(temporary.name)
@@ -50,7 +50,7 @@ def extract_zip(manager, archive_name: str, destination: str, user_id: int) -> l
     if archive_path.stat().st_size > manager.max_file_bytes:
         raise SafeFileError("ZIP-файл превышает установленный лимит")
     manager.audit.ensure_owner(archive_path.relative_to(manager.root).as_posix(), user_id, require_registered=True)
-    with manager._lock, manager._cross_process_lock(), zipfile.ZipFile(archive_path) as archive:
+    with manager.audit.transaction(), zipfile.ZipFile(archive_path) as archive:
         entries = archive.infolist()
         if len(entries) > 1000:
             raise SafeFileError("В архиве слишком много записей")
