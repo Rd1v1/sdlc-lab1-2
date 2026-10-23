@@ -1,34 +1,35 @@
-# Практики 1–2. Файловый менеджер и CI/CD
+# Команды файлового менеджера
 
-## Практика 1
+Установка и запуск приведены в [README.md](README.md). Команды выполняются из корня репозитория. В примерах используется зарегистрированный пользователь `demo`; при запросе вводится его пароль.
 
-Консольное приложение показывает сведения о дисках, создаёт, читает, изменяет и удаляет файлы, записывает и читает JSON/XML, создаёт и распаковывает ZIP. Сохраняются пользователи, права владельцев, файловые метаданные и журнал операций SQLite. Пароли защищены scrypt со случайной солью, SQL-запросы параметризованы.
+## Диски и файлы
 
-Копирование и перемещение удалены как дополнительные функции. Платформенные mutex/flock заменены SQLite-транзакцией BEGIN IMMEDIATE на файловую операцию. Вложенные записи метаданных и аудита не фиксируют транзакцию преждевременно: внешний вызов выполняет commit или rollback. RLock защищает использование одного соединения потоками, SQLite сериализует независимые процессы. Запись файла остаётся атомарной через временный файл и os.replace.
+```powershell
+powershell -ExecutionPolicy Bypass -File run.ps1 drives
+powershell -ExecutionPolicy Bypass -File run.ps1 pwd
+powershell -ExecutionPolicy Bypass -File run.ps1 write note.txt --text "Привет" --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 read note.txt --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 write note.txt --text "Новый текст" --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 list --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 delete note.txt --user demo
+```
 
-Проверяются границы рабочего каталога, права владельца, небезопасные XML-конструкции, пути ZIP, ссылки, размеры, количество записей и степень сжатия. Существующие таблицы Users, Files и Operations не изменены. Прежняя версия создала контрольную БД и файл; упрощённая версия успешно проверила сохранённый пароль, владельца, содержимое и журнал без миграции.
+Файлы находятся в `lab1-data/files`. Каждая команда запускается отдельно.
 
-## Практика 2
+## JSON и XML
 
-| Стадия | Проверяемое поведение | Результат локального act |
-| --- | --- | --- |
-| build | Сборка реального LAB 1 в Docker, кэш и build-image | Успешно |
-| test | Те же тесты в контейнере, JUnit XML | Успешно |
-| sast | Bandit, блокировка находок HIGH | Успешно |
-| deploy | Непривилегированный runtime, порт, /health и CLI | Успешно |
+```powershell
+powershell -ExecutionPolicy Bypass -File run.ps1 json-write data.json --value '[1,2,3]' --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 json-read data.json --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 xml-write data.xml --value '<root><name>demo</name></root>' --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 xml-read data.xml --user demo
+```
 
-Стадии связаны зависимостями; образ передаётся артефактом. JUnit и SAST-отчёт сохраняются в артефактах. Развёртывание проверяет UID 10001, публикацию 127.0.0.1:18080 и консольную справку. Демонстрационный контейнер удаляется после проверки. /health нужен только для подтверждения работоспособности контейнера.
+## ZIP
 
-## Результаты проверки
+```powershell
+powershell -ExecutionPolicy Bypass -File run.ps1 zip-create data.zip data.json data.xml --user demo
+powershell -ExecutionPolicy Bypass -File run.ps1 zip-extract data.zip unpacked --user demo
+```
 
-- Все 21 локальный и 21 контейнерный тест прошли без пропусков и ошибок.
-- Полная демонстрация файловых операций, JSON/XML/ZIP и ошибочного пути прошла на временных данных.
-- Проверены конкурентные записи потоков и независимых процессов, общий commit/rollback метаданных и аудита, авторизация и защита путей/архивов.
-- Проверены реальные отрицательные gates: намеренно ошибочный тест и статическая находка HIGH останавливают соответствующую проверку.
-- Bandit HIGH=0 локально и в контейнере; реальные JUnit/SAST-артефакты локального runner проверены.
-- В GitHub Actions также успешны все четыре стадии; скачанные JUnit/SAST подтверждают 21 тест без ошибок/пропусков и HIGH=0.
-- Зависимости .venv согласованы. README содержит только запуск.
-
-## Ограничения
-
-SQLite не поддерживает хранимые процедуры; используются параметризованные запросы. SQLite-транзакция и атомарная замена файла не образуют общую файловую транзакцию: восстановление после аварии между изменением файла и commit БД не реализовано. Прямой доступ постороннего процесса к каталогу и БД находится вне модели пользователей приложения.
+Для архива и каталога распаковки используйте свободные имена. Справка по отдельной команде: `run.ps1 <команда> --help`.

@@ -24,6 +24,6 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-tools.ps1
 powershell -ExecutionPolicy Bypass -File scripts/ci-local.ps1
 ```
 
-Команда запускает конвейер build → test → sast → deploy. Для LAB 1 Docker не требуется.
+Команда запускает конвейер build → test → sast → deploy.
 
 Для повторного CI-запуска с заполненным кэшем добавьте `-Offline` к `scripts/ci-local.ps1`.
