@@ -20,5 +20,23 @@
       "skipped": 0
     },
     "container_sast_high": 0
+  },
+  "remote_ci": {
+    "run_id": 40039535412,
+    "code_commit": "a3a24f10c884d8bb78f1e23679b94d853c7c09a8",
+    "conclusion": "success",
+    "jobs": {
+      "build": "success",
+      "test": "success",
+      "sast": "success",
+      "deploy": "success"
+    },
+    "container_sast_high": 0,
+    "container_tests": {
+      "tests": 21,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
   }
 }
