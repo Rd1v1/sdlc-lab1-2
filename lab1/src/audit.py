@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any
 from .errors import SafeFileError
+from .file_changes import FileChanges
 
 
 class AuditStore:
@@ -19,6 +20,8 @@ class AuditStore:
         self._connection = sqlite3.connect(database, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._file_changes: FileChanges | None = None
+        self._rollback_only = False
         with self._lock:
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._connection.executescript(
@@ -52,17 +55,34 @@ class AuditStore:
     def transaction(self):
         """SQLite serializes application operations across threads and processes."""
         with self._lock:
-            outer = not self._connection.in_transaction
+            outer = self._file_changes is None
             if outer:
                 self._connection.execute('BEGIN IMMEDIATE')
+                self._file_changes = FileChanges()
+                self._rollback_only = False
             try:
-                yield
+                yield self._file_changes
                 if outer:
+                    if self._rollback_only:
+                        raise SafeFileError("Транзакция отменена из-за ошибки вложенной операции")
                     self._connection.commit()
             except BaseException:
+                self._rollback_only = True
                 if outer:
-                    self._connection.rollback()
+                    try:
+                        # Restore files before releasing SQLite's write lock.
+                        self._file_changes.rollback()
+                    except OSError as restore_error:
+                        raise SafeFileError(f"Не удалось восстановить файлы: {restore_error}") from restore_error
+                    finally:
+                        self._connection.rollback()
                 raise
+            else:
+                if outer:
+                    self._file_changes.discard()
+            finally:
+                if outer:
+                    self._file_changes = None
 
     def create_user(self, username: str, password: str) -> int:
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,50}", username):
@@ -145,7 +165,7 @@ class AuditStore:
                 (operation, file_id, user_id, path),
             )
 
-    def record_activity(self, operation: str, path: str, user_id: int) -> None:
+    def record_activity(self, operation: str, path: str, user_id: int, detail: str | None = None) -> None:
         with self.transaction():
             row = self._connection.execute(
                 "SELECT id FROM Files WHERE location = ?", (path,)
@@ -153,7 +173,7 @@ class AuditStore:
             self._connection.execute(
                 "INSERT INTO Operations(operation_type, file_id, user_id, detail) "
                 "VALUES (?, ?, ?, ?)",
-                (operation, int(row["id"]) if row else None, user_id, path),
+                (operation, int(row["id"]) if row else None, user_id, path if detail is None else detail),
             )
 
     def ensure_owner(self, path: str, user_id: int, require_registered: bool = False) -> None:

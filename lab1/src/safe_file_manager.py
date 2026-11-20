@@ -1,17 +1,18 @@
-"""Файловые операции и координация проверок, блокировок и аудита."""
 from __future__ import annotations
 
 import json
-import os
-import re
-import tempfile
+import pyexpat
 from pathlib import Path
 from typing import Any
 import xml.etree.ElementTree as ET
+
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
+
 from .archives import create_zip, extract_zip
 from .audit import AuditStore
-from .drives import list_drives
 from .errors import SafeFileError
+from .file_changes import atomic_writer
 from .paths import resolve_path
 
 
@@ -52,33 +53,26 @@ class SafeFileManager:
         if len(data) > self.max_file_bytes:
             raise SafeFileError("Размер файла превышает установленный лимит")
         path = self._path(name)
-        with self.audit.transaction():
+        with self.audit.transaction() as changes:
             self.audit.ensure_owner(
                 path.relative_to(self.root).as_posix(), user_id, require_registered=path.exists()
             )
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary_path = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary:
-                    temporary_path = Path(temporary.name)
-                    temporary.write(data)
-                    temporary.flush()
-                    os.fsync(temporary.fileno())
-                os.replace(temporary_path, path)
-                self.audit.record_file(path.relative_to(self.root).as_posix(), len(data), user_id, "write")
-            finally:
-                if temporary_path is not None:
-                    temporary_path.unlink(missing_ok=True)
+            changes.mkdir(path.parent)
+            changes.preserve_file(path)
+            with atomic_writer(path) as temporary:
+                temporary.write(data)
+            self.audit.record_file(path.relative_to(self.root).as_posix(), len(data), user_id, "write")
 
     def write_text(self, name: str, text: str, user_id: int) -> None:
         self.write_bytes(name, text.encode("utf-8"), user_id)
 
     def delete(self, name: str, user_id: int) -> None:
         path = self._path(name)
-        with self.audit.transaction():
+        with self.audit.transaction() as changes:
             if not path.is_file():
                 raise SafeFileError("Файл не найден")
             self.audit.ensure_owner(path.relative_to(self.root).as_posix(), user_id, require_registered=True)
+            changes.preserve_file(path)
             path.unlink()
             self.audit.record_file(path.relative_to(self.root).as_posix(), 0, user_id, "delete")
 
@@ -95,12 +89,17 @@ class SafeFileManager:
     def read_xml(self, name: str, user_id: int) -> ET.Element:
         return self._parse_xml(self.read_text(name, user_id))
 
-    @staticmethod
-    def _parse_xml(xml_text: str) -> ET.Element:
-        if re.search(r"<!\s*(DOCTYPE|ENTITY)", xml_text, flags=re.IGNORECASE):
-            raise SafeFileError("DTD и объявления сущностей в XML запрещены")
+    def _parse_xml(self, xml_text: str) -> ET.Element:
+        if len(xml_text.encode("utf-8")) > self.max_file_bytes:
+            raise SafeFileError("Размер XML превышает установленный лимит")
+        if pyexpat.version_info < (2, 7, 2):
+            raise SafeFileError("Для обработки XML обновите Python: требуется Expat 2.7.2 или новее")
         try:
-            return ET.fromstring(xml_text)
+            return SafeET.fromstring(
+                xml_text, forbid_dtd=True, forbid_entities=True, forbid_external=True
+            )
+        except DefusedXmlException as error:
+            raise SafeFileError("DTD, объявления сущностей и внешние ссылки в XML запрещены") from error
         except ET.ParseError as error:
             raise SafeFileError("Некорректный XML") from error
 
@@ -114,7 +113,3 @@ class SafeFileManager:
 
     def _path(self, name: str) -> Path:
         return resolve_path(self.root, name)
-
-    @staticmethod
-    def list_drives():
-        return list_drives()

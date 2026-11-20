@@ -10,12 +10,14 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .audit import AuditStore
+from .drives import list_drives
 from .errors import SafeFileError
 from .safe_file_manager import SafeFileManager
 
 
 DATA_ROOT = Path("lab1-data/files")
 AUDIT_DATABASE = Path("lab1-data/audit.sqlite3")
+OPERATION_ERRORS = (SafeFileError, OSError, sqlite3.Error, json.JSONDecodeError, UnicodeError, zipfile.BadZipFile)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,14 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
     write.add_argument("--text", required=True)
     write.add_argument("--user", required=True)
 
-    json_write = commands.add_parser("json-write", help="Записать JSON")
-    json_write.add_argument("name")
-    json_write.add_argument("--value", required=True)
-    json_write.add_argument("--user", required=True)
-    xml_write = commands.add_parser("xml-write", help="Записать XML")
-    xml_write.add_argument("name")
-    xml_write.add_argument("--value", required=True)
-    xml_write.add_argument("--user", required=True)
+    for name, description in (("json-write", "Записать JSON"), ("xml-write", "Записать XML")):
+        command = commands.add_parser(name, help=description)
+        command.add_argument("name")
+        command.add_argument("--value", required=True)
+        command.add_argument("--user", required=True)
     archive = commands.add_parser("zip-create", help="Создать ZIP из файлов рабочего каталога")
     archive.add_argument("archive")
     archive.add_argument("files", nargs="+")
@@ -70,10 +69,11 @@ def run(arguments: list[str] | None = None) -> int:
         return 0
     options = build_parser().parse_args(arguments)
     if options.command == "drives":
-        print(json.dumps(SafeFileManager.list_drives(), ensure_ascii=False, indent=2))
+        print(json.dumps(list_drives(), ensure_ascii=False, indent=2))
         return 0
     try:
         store = AuditStore(AUDIT_DATABASE)
+        user_id = None
         try:
             if options.command == "register":
                 store.create_user(options.username, getpass.getpass("Пароль (не менее 8 символов): "))
@@ -111,12 +111,25 @@ def run(arguments: list[str] | None = None) -> int:
             elif options.command == "zip-extract":
                 print(json.dumps(manager.extract_zip(options.archive, options.destination, user_id), ensure_ascii=False))
             return 0
+        except OPERATION_ERRORS as error:
+            if user_id is not None:
+                path = getattr(options, "name", getattr(options, "archive", ""))
+                detail = {"path": path, "error": str(error)}
+                for field in ("destination", "files"):
+                    if hasattr(options, field):
+                        detail[field] = getattr(options, field)
+                try:
+                    store.record_activity(options.command + "_failed", path, user_id,
+                                          detail=json.dumps(detail, ensure_ascii=False))
+                except (OSError, sqlite3.Error) as audit_error:
+                    print(f"Не удалось записать ошибку в журнал: {audit_error}", file=sys.stderr)
+            raise
         finally:
             store.close()
     except (EOFError, KeyboardInterrupt):
         print("Ввод прерван", file=sys.stderr)
         return 130
-    except (SafeFileError, OSError, sqlite3.Error, json.JSONDecodeError, UnicodeError, zipfile.BadZipFile) as error:
+    except OPERATION_ERRORS as error:
         print(f"Ошибка: {error}", file=sys.stderr)
         return 2
 

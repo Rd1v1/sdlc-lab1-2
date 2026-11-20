@@ -4,18 +4,11 @@ from __future__ import annotations
 import ctypes
 import os
 import shutil
-from pathlib import Path
 from typing import Any
 
 
 def list_drives() -> list[dict[str, Any]]:
-    roots = []
-    if hasattr(os, "listdrives"):
-        roots = os.listdrives()
-    elif os.name == "nt":
-        roots = [f"{letter}:\\" for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{letter}:\\").exists()]
-    else:
-        roots = ["/"]
+    roots = os.listdrives() if os.name == "nt" else ["/"]
     drives = []
     for root in roots:
         try:

@@ -1,12 +1,11 @@
-"""Безопасное создание ZIP и проверка всех записей перед распаковкой."""
 from __future__ import annotations
 
 import os
 import shutil
-import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from .errors import SafeFileError
+from .file_changes import atomic_writer
 
 
 def create_zip(manager, archive_name: str, names: list[str], user_id: int) -> None:
@@ -15,31 +14,27 @@ def create_zip(manager, archive_name: str, names: list[str], user_id: int) -> No
     archive_path = manager._path(archive_name)
     if archive_path.exists():
         raise SafeFileError("Архив уже существует; перезапись запрещена")
-    sources = [(manager._path(name), name) for name in names]
-    if any(not path.is_file() for path, _ in sources):
+    sources = [manager._path(name) for name in names]
+    if any(not path.is_file() for path in sources):
         raise SafeFileError("Один из файлов для архивации не найден")
-    for path, _ in sources:
+    for path in sources:
         manager.audit.ensure_owner(path.relative_to(manager.root).as_posix(), user_id, require_registered=True)
     manager.audit.ensure_owner(
         archive_path.relative_to(manager.root).as_posix(), user_id, require_registered=archive_path.exists()
     )
-    total = sum(path.stat().st_size for path, _ in sources)
+    total = sum(path.stat().st_size for path in sources)
     if total > manager.max_archive_bytes:
         raise SafeFileError("Суммарный размер архива превышает лимит")
-    with manager.audit.transaction():
-        archive_path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(dir=archive_path.parent, suffix=".zip", delete=False) as temporary:
-            temporary_path = Path(temporary.name)
-        try:
-            with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                for path, name in sources:
+    with manager.audit.transaction() as changes:
+        changes.mkdir(archive_path.parent)
+        changes.preserve_file(archive_path)
+        with atomic_writer(archive_path) as temporary:
+            with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in sources:
                     archive.write(path, arcname=path.relative_to(manager.root).as_posix())
-            if temporary_path.stat().st_size > manager.max_file_bytes:
+            if temporary.tell() > manager.max_file_bytes:
                 raise SafeFileError("Размер ZIP-файла превышает лимит")
-            os.replace(temporary_path, archive_path)
-            manager.audit.record_file(archive_path.relative_to(manager.root).as_posix(), archive_path.stat().st_size, user_id, "write")
-        finally:
-            temporary_path.unlink(missing_ok=True)
+        manager.audit.record_file(archive_path.relative_to(manager.root).as_posix(), archive_path.stat().st_size, user_id, "write")
 
 
 def extract_zip(manager, archive_name: str, destination: str, user_id: int) -> list[str]:
@@ -50,7 +45,7 @@ def extract_zip(manager, archive_name: str, destination: str, user_id: int) -> l
     if archive_path.stat().st_size > manager.max_file_bytes:
         raise SafeFileError("ZIP-файл превышает установленный лимит")
     manager.audit.ensure_owner(archive_path.relative_to(manager.root).as_posix(), user_id, require_registered=True)
-    with manager.audit.transaction(), zipfile.ZipFile(archive_path) as archive:
+    with manager.audit.transaction() as changes, zipfile.ZipFile(archive_path) as archive:
         entries = archive.infolist()
         if len(entries) > 1000:
             raise SafeFileError("В архиве слишком много записей")
@@ -78,7 +73,6 @@ def extract_zip(manager, archive_name: str, destination: str, user_id: int) -> l
             ratio = entry.file_size / max(entry.compress_size, 1)
             if ratio > manager.max_compression_ratio:
                 raise SafeFileError("Степень сжатия превышает допустимый предел")
-        # Validate every target before any extraction and never overwrite existing data.
         targets = {}
         for entry in entries:
             output = manager._path((Path(destination) / entry.filename).as_posix())
@@ -86,8 +80,6 @@ def extract_zip(manager, archive_name: str, destination: str, user_id: int) -> l
             if key in targets or output.exists():
                 raise SafeFileError("Цель ZIP уже существует или повторяется; перезапись запрещена")
             targets[key] = entry.is_dir()
-        # A file named 'a' cannot also be the parent of 'a/b'. Reject the
-        # entire conflicting layout before writing the first member.
         for entry in entries:
             output = manager._path((Path(destination) / entry.filename).as_posix())
             for parent in output.parents:
@@ -96,31 +88,21 @@ def extract_zip(manager, archive_name: str, destination: str, user_id: int) -> l
                 parent_key = os.path.normcase(str(parent))
                 if parent.is_file() or (parent_key in targets and not targets[parent_key]):
                     raise SafeFileError("Файл ZIP конфликтует с каталогом назначения")
-        destination_path.mkdir(parents=True, exist_ok=True)
+        changes.mkdir(destination_path)
         extracted = []
         for entry in entries:
             if entry.is_dir():
-                manager._path((Path(destination) / entry.filename).as_posix()).mkdir(parents=True, exist_ok=True)
+                changes.mkdir(manager._path((Path(destination) / entry.filename).as_posix()))
                 continue
             output = (destination_path / Path(*PurePosixPath(entry.filename).parts)).resolve()
             if not output.is_relative_to(destination_path.resolve()):
                 raise SafeFileError("Путь из архива выходит за каталог назначения")
             relative = output.relative_to(manager.root).as_posix()
             manager.audit.ensure_owner(relative, user_id)
-            output.parent.mkdir(parents=True, exist_ok=True)
-            temporary_path = None
-            try:
-                with archive.open(entry) as source, tempfile.NamedTemporaryFile(
-                    dir=output.parent, delete=False
-                ) as temporary:
-                    temporary_path = Path(temporary.name)
-                    shutil.copyfileobj(source, temporary, length=64 * 1024)
-                    temporary.flush()
-                    os.fsync(temporary.fileno())
-                os.replace(temporary_path, output)
-            finally:
-                if temporary_path is not None:
-                    temporary_path.unlink(missing_ok=True)
+            changes.mkdir(output.parent)
+            changes.preserve_file(output)
+            with archive.open(entry) as source, atomic_writer(output) as temporary:
+                shutil.copyfileobj(source, temporary, length=64 * 1024)
             manager.audit.record_file(relative, output.stat().st_size, user_id, "write")
             extracted.append(relative)
         return extracted

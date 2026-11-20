@@ -17,7 +17,6 @@ from scripts.junit import JUnitResult
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--lab', choices=['1'], default='1')
     parser.add_argument('--junit', type=Path, default=Path('artifacts/junit.xml'))
     parser.add_argument('--failure-probe', action='store_true', help='Deliberate failure to verify CI exit code')
     args = parser.parse_args(argv)
@@ -27,10 +26,15 @@ def main(argv=None):
     tempfile.tempdir = str(scratch)
     for key in ('TMP', 'TEMP', 'TMPDIR'):
         os.environ[key] = str(scratch)
+    if not compileall.compile_file(ROOT / 'main.py', quiet=1):
+        return 1
     for source in ('lab1/src', 'scripts'):
         if not compileall.compile_dir(ROOT / source, quiet=1):
             return 1
-    suite = unittest.TestLoader().discover(str(ROOT / 'lab1/tests'))
+    suite = unittest.TestSuite(
+        unittest.TestLoader().discover(str(ROOT / directory))
+        for directory in ('lab1/tests', 'scripts/tests')
+    )
     if args.failure_probe:
         class DeliberateFailure(unittest.TestCase):
             def runTest(self):

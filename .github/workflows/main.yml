@@ -20,7 +20,7 @@ jobs:
       - name: Build real application in container
         run: |
           mkdir -p /tmp/sdlc-build
-          cp -a Dockerfile .dockerignore requirements.txt requirements-dev.txt lab1 scripts .github /tmp/sdlc-build/
+          cp -a Dockerfile .dockerignore requirements.txt requirements-dev.txt main.py lab1 scripts .github /tmp/sdlc-build/
           if [ -d .cache/docker ]; then mkdir -p /tmp/sdlc-build/.cache; cp -a .cache/docker /tmp/sdlc-build/.cache/; fi
           cd /tmp/sdlc-build
           docker buildx build --target build --load -t sdlc-build:local --cache-from type=local,src=.cache/docker --cache-to type=local,dest=.cache/docker-next,mode=max .
@@ -68,26 +68,69 @@ jobs:
       - name: Fail on High severity vulnerabilities
         run: |
           docker load -i artifacts/build-image.tar
-          docker run --name sdlc-sast sdlc-build:local sh -c 'mkdir -p artifacts && python -m bandit -r lab1/src -lll -f json -o artifacts/bandit.json'
+          docker run --name sdlc-sast sdlc-build:local sh -c '
+            mkdir -p artifacts
+            python -m bandit -r main.py lab1/src -lll -f json -o artifacts/bandit.json
+            scan_status=$?
+            python scripts/security_reports.py bandit artifacts/bandit.json
+            report_status=$?
+            if [ "$scan_status" -ne 0 ]; then exit "$scan_status"; fi
+            exit "$report_status"'
       - name: Collect SAST report
         if: always()
         run: |
-          docker cp sdlc-sast:/app/artifacts/bandit.json artifacts/bandit.json
+          docker cp sdlc-sast:/app/artifacts/. artifacts/
           docker rm sdlc-sast
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sast
-          path: artifacts/bandit.json
+          path: |
+            artifacts/bandit.json
+            artifacts/bandit.xml
+            artifacts/bandit.pdf
+  sca:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-image
+          path: artifacts
+      - name: Audit installed Python modules; fail on known vulnerabilities
+        run: |
+          docker load -i artifacts/build-image.tar
+          docker run --name sdlc-sca sdlc-build:local sh -c '
+            mkdir -p artifacts
+            python -m pip_audit --local --strict --cache-dir .cache/pip-audit --progress-spinner off --format json --output artifacts/pip-audit.json
+            scan_status=$?
+            python scripts/security_reports.py pip-audit artifacts/pip-audit.json
+            report_status=$?
+            if [ "$scan_status" -ne 0 ]; then exit "$scan_status"; fi
+            exit "$report_status"'
+      - name: Collect dependency audit report
+        if: always()
+        run: |
+          docker cp sdlc-sca:/app/artifacts/. artifacts/
+          docker rm sdlc-sca
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sca
+          path: |
+            artifacts/pip-audit.json
+            artifacts/pip-audit.xml
+            artifacts/pip-audit.pdf
   deploy:
-    needs: sast
+    needs: [sast, sca]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build and run non-root application locally
         run: |
           mkdir -p /tmp/sdlc-deploy
-          cp -a Dockerfile .dockerignore requirements.txt requirements-dev.txt lab1 scripts .github /tmp/sdlc-deploy/
+          cp -a Dockerfile .dockerignore requirements.txt requirements-dev.txt main.py lab1 scripts .github /tmp/sdlc-deploy/
           cd /tmp/sdlc-deploy
           docker build --target runtime -t sdlc-lab1:local .
           docker run -d --name sdlc-lab1-demo -p 127.0.0.1:18080:8080 sdlc-lab1:local
@@ -96,7 +139,7 @@ jobs:
             sleep 1
           done
           curl --fail http://127.0.0.1:18080/health
-          docker exec sdlc-lab1-demo python -m lab1.src.app help
+          docker exec sdlc-lab1-demo python main.py help
           test "$(docker exec sdlc-lab1-demo id -u)" = 10001
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           docker save sdlc-lab1:local -o "$GITHUB_WORKSPACE/artifacts/lab1-image.tar"

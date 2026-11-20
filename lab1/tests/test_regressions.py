@@ -92,10 +92,18 @@ class RegressionTests(unittest.TestCase):
         self.assertFalse((self.fm.root / "out/good").exists())
 
     def test_io_failure_cleans_temporary_file(self):
-        with patch("lab1.src.safe_file_manager.os.fsync", side_effect=PermissionError("denied")):
+        with patch("lab1.src.file_changes.os.fsync", side_effect=PermissionError("denied")):
             with self.assertRaises(PermissionError):
                 self.fm.write_text("a", "hello", self.user)
         self.assertEqual(list(self.fm.root.iterdir()), [])
+
+    def test_zip_size_limit_includes_archive_headers(self):
+        manager = SafeFileManager(self.fm.root, self.audit, max_file_bytes=100)
+        manager.write_text('a.txt', 'payload', self.user)
+        with self.assertRaisesRegex(SafeFileError, 'ZIP-файла превышает лимит'):
+            manager.create_zip('too-large.zip', ['a.txt'], self.user)
+        self.assertEqual([path.name for path in self.fm.root.iterdir()], ['a.txt'])
+        self.assertEqual([row['location'] for row in manager.list_files(self.user)], ['a.txt'])
 
     def test_zip_file_parent_conflict_rejected_before_any_write(self):
         for entries in (('a', 'a/b'), ('a/b', 'a')):

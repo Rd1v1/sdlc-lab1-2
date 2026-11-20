@@ -9,12 +9,9 @@ if (-not (Test-Path -LiteralPath $python)) {
     else { & python -m venv .venv }
     if ($LASTEXITCODE -ne 0) { throw 'Python 3.13+ is required' }
 }
-& $python -c 'import sys; assert sys.version_info >= (3,13); assert sys.prefix != sys.base_prefix'
-if ($LASTEXITCODE -ne 0) { throw 'Invalid local virtual environment' }
-& $python -m pip install --disable-pip-version-check --cache-dir .cache/pip -r requirements.txt
+& $python -c 'import sys, pyexpat; assert sys.version_info >= (3,13); assert sys.prefix != sys.base_prefix; assert pyexpat.version_info >= (2,7,2), "Update Python: Expat 2.7.2+ is required"'
+if ($LASTEXITCODE -ne 0) { throw 'Python 3.13+ with Expat 2.7.2+ is required in .venv' }
+$requirements = if ($Dev) { 'requirements-dev.txt' } else { 'requirements.txt' }
+& $python -m pip install --disable-pip-version-check --cache-dir .cache/pip -r $requirements
 if ($LASTEXITCODE -ne 0) { throw 'Local dependency restore failed' }
-if ($Dev) {
-    & $python -m pip install --disable-pip-version-check --cache-dir .cache/pip -r requirements-dev.txt
-    if ($LASTEXITCODE -ne 0) { throw 'Local dev dependency restore failed' }
-}
 Write-Output 'Ready. All Python packages are inside .venv.'

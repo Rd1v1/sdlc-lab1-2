@@ -1,5 +1,4 @@
 """Reproducible CLI demo; disposable data stays inside the repository."""
-import os
 from pathlib import Path
 import sys
 import tempfile
